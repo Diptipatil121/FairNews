@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
   # News Bias Detection UI
 
@@ -9,3 +10,7 @@
 
   Run `npm run dev` to start the development server.
   
+=======
+# FairNews
+A Web and Browser Extension for Analyzing News Bias
+>>>>>>> 6e64b431ea430e23c1126a17a6293bc1d42693dd

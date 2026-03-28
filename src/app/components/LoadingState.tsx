@@ -37,12 +37,12 @@ export function LoadingState({ pipelineSteps }: LoadingStateProps) {
             Analyzing Article
           </h3>
           <p className="text-sm text-gray-600 dark:text-gray-400">
-            This may take a few moments...
+            This may take a few moments...Please wait...
           </p>
         </div>
 
         {steps.length > 0 && (
-          <div className="w-full max-w-md space-y-3">
+          <div className="mx-auto w-fit max-w-full space-y-3 px-2">
             {allSteps.map((step, index) => {
               const isCompleted = steps.includes(step);
               const isActive = index === steps.length && !isCompleted;

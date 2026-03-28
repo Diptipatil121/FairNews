@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { ThemeProvider } from 'next-themes';
 import { motion } from 'motion/react';
 import { Header } from './components/Header';
+// FUTURE: video page background — uncomment import + usage below; see ReportBackground.tsx
+// import { ReportBackground } from './components/ReportBackground';
 import { InputForm } from './components/InputForm';
 import { LoadingState } from './components/LoadingState';
 import { ResultsPanel } from './components/ResultsPanel.tsx';
@@ -129,9 +131,16 @@ function AppContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-background text-foreground dark:bg-background dark:text-foreground transition-colors" style={{ backgroundImage: 'linear-gradient(130deg, var(--primary) 0%, var(--background) 45%, var(--secondary) 100%)' }}>
+    <div
+      className="min-h-screen bg-background text-foreground dark:bg-background dark:text-foreground transition-colors"
+      style={{ backgroundImage: 'linear-gradient(130deg, var(--primary) 0%, var(--background) 45%, var(--secondary) 100%)' }}
+    >
+      {/* FUTURE: video background — add `relative` to root div, then:
+          <ReportBackground />
+          <div className="relative z-10"> ... Header + main ... </div>
+          and remove the style.backgroundImage above (overlay is inside ReportBackground). */}
       <Header />
-      
+
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="space-y-8">
           <div>

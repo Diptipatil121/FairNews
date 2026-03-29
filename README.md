@@ -9,7 +9,7 @@ The application allows users to input a news article URL and receive bias analys
 ## 🚀 Live Demo
 
 Deployed on Vercel:
-👉 https://your-vercel-link.vercel.app
+👉 [https://your-vercel-link.vercel.app](https://fair-news-fcio77c16-dipti-patils-projects-ecc04a97.vercel.app/)
 
 ---
 

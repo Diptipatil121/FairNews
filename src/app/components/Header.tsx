@@ -1,6 +1,6 @@
 import { Moon, Sun, Newspaper } from 'lucide-react';
 import { useTheme } from 'next-themes';
-import logoSrc from '../../image/FairNews logo with tricolour symbol.png';
+import logoSrc from '@/image/FairNews logo with tricolour symbol.png';
 
 export function Header() {
   const { theme, setTheme } = useTheme();
@@ -12,8 +12,8 @@ export function Header() {
           <div className="flex items-center gap-3">
           
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <img src={logoSrc} alt="FairNews logo" className="w-20 h-20 object-contain" />
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                <img src={logoSrc} alt="FairNews logo" className="w-16 h-16 object-contain flex-shrink-0" />
                 FairNews
               </h1>
               <p className="text-sm text-gray-600 dark:text-gray-400">

@@ -1,3 +1,4 @@
+import React from 'react';
 import { motion } from 'motion/react';
 import { Loader2 } from 'lucide-react';
 
@@ -10,10 +11,11 @@ const stepLabels: Record<string, string> = {
   preprocessed: 'Preprocessing content',
   coref_resolved: 'Resolving coreferences',
   bias_scored: 'Calculating bias score',
+  explanation_generated: 'Generating explanation',
 };
 
 export function LoadingState({ pipelineSteps }: LoadingStateProps) {
-  const allSteps = ['scraped', 'coref_resolved', 'preprocessed', 'bias_scored'];
+  const allSteps = ['scraped', 'coref_resolved', 'preprocessed', 'bias_scored', 'explanation_generated'];
   const steps = pipelineSteps ?? [];
   
   return (

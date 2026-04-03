@@ -1,6 +1,6 @@
 import { motion } from 'motion/react';
 import { BarChart3 } from 'lucide-react';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, Line } from 'recharts';
 import React from 'react';
 
 // Keep the payload typing local to avoid parser/HMR issues with type-only imports.
@@ -118,6 +118,8 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
       'freq',
       'num_articles',
       'articles',
+      'article_count',
+      'articleCount',
       'num',
       'value',
       'score',
@@ -243,9 +245,99 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
   const topSources = Array.isArray(data.top_sources) ? data.top_sources : [];
   const sourceLabelBias = Array.isArray(data.source_label_bias) ? data.source_label_bias : [];
 
+  // Helper to safely extract numeric values
+  const extractBiasValue = (record: unknown, ...keys: string[]): number => {
+    if (!record || typeof record !== 'object') return 0;
+    const obj = record as Record<string, unknown>;
+    
+    for (const key of keys) {
+      const val = obj[key];
+      
+      // Handle different data types
+      if (val === undefined || val === null) continue;
+      
+      let num: number;
+      if (typeof val === 'number') {
+        num = val;
+      } else if (typeof val === 'string') {
+        num = parseFloat(val);
+      } else {
+        num = Number(val);
+      }
+      
+      // Return if we have a valid finite number
+      if (!isNaN(num) && isFinite(num)) {
+        return num;
+      }
+    }
+    
+    return 0;
+  };
+
   const topSourcesSorted = [...topSources]
     .filter((item) => item && typeof item === 'object')
     .sort((a, b) => getCount(b) - getCount(a));
+
+  const topSourcesPieData = topSourcesSorted
+    .slice(0, 10)
+    .map((entry) => {
+      const record = entry as Record<string, unknown>;
+      const source = formatValue(pickSourceLike(record));
+      return {
+        source: typeof source === 'string' && source.trim() ? source : 'Unknown',
+        value: getCount(record),
+      };
+    });
+
+  const topSourcesPieTotal = topSourcesPieData.reduce((sum, item) => sum + item.value, 0);
+
+  const topSourceColors = [
+    '#10b981',
+    '#0ea5e9',
+    '#ef4444',
+    '#8b5cf6',
+    '#ec4899',
+    '#06b6d4',
+    '#3b82f6',
+    '#f59e0b',
+  ];
+
+  const renderTopSourcesTooltip = ({
+    active,
+    payload,
+  }: {
+    active?: boolean;
+    payload?: Array<{
+      payload?: { source?: unknown; value?: unknown };
+    }>;
+  }) => {
+    if (!active || !payload?.length) return null;
+
+    const first = payload[0];
+    const sourceRaw = first.payload?.source;
+    const valueRaw = first.payload?.value;
+
+    const source = typeof sourceRaw === 'string' && sourceRaw.trim() ? sourceRaw : 'Unknown';
+    const value =
+      typeof valueRaw === 'number'
+        ? valueRaw
+        : typeof valueRaw === 'string'
+          ? Number(valueRaw)
+          : null;
+
+    const percent =
+      value != null && Number.isFinite(value) && topSourcesPieTotal > 0 ? (value / topSourcesPieTotal) * 100 : null;
+
+    return (
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
+        <p className="text-sm font-medium text-gray-900 dark:text-white">{source}</p>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Articles: {value != null && Number.isFinite(value) ? value : '—'}
+          {percent != null ? ` (${percent.toFixed(1)}%)` : ''}
+        </p>
+      </div>
+    );
+  };
 
   const sourceLabelBiasSorted = [...sourceLabelBias]
     .filter((item) => item && typeof item === 'object')
@@ -312,12 +404,147 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
     return row;
   });
 
-  const renderLabelDistribution = (distribution: Record<string, unknown>) => {
-    const prepared = Object.entries(distribution)
+  const extractBiasDistribution = (sources: Array<Record<string, unknown>>) => {
+    let bjpTotal = 0;
+    let congressTotal = 0;
+    let bjpCount = 0;
+    let congressCount = 0;
+
+    sources.forEach((source) => {
+      const bjp = toFiniteNumber((source as Record<string, unknown>).avg_bjp_bias);
+      const congress = toFiniteNumber((source as Record<string, unknown>).avg_congress_bias);
+
+      if (bjp !== null) {
+        bjpTotal += bjp;
+        bjpCount++;
+      }
+      if (congress !== null) {
+        congressTotal += congress;
+        congressCount++;
+      }
+    });
+
+    const bjpAvg = bjpCount > 0 ? bjpTotal / bjpCount : 0;
+    const congressAvg = congressCount > 0 ? congressTotal / congressCount : 0;
+
+    return [
+      { label: 'BJP Bias', count: Math.abs(bjpAvg), rawValue: bjpAvg },
+      { label: 'Congress Bias', count: Math.abs(congressAvg), rawValue: congressAvg },
+    ];
+  };
+
+  const renderLabelDistribution = (distribution: Record<string, unknown> | null) => {
+    // If distribution is empty or null, show bias distribution line chart for all sources
+    if (!distribution || Object.keys(distribution).length === 0) {
+      // Use sourceLabelBias data if available, otherwise topSourcesSorted
+      const dataSource = sourceLabelBias.length > 0 ? sourceLabelBias : topSourcesSorted;
+      
+      if (dataSource.length === 0) {
+        return <span className="text-gray-500 dark:text-gray-400">No distribution data</span>;
+      }
+
+      // Create line chart data for all sources
+      const lineChartData = dataSource.map((source, idx) => {
+        const sourceName = formatValue(pickSourceLike(source));
+        const bjp = extractBiasValue(source, 'avg_bjp_bias', 'avgBjpBias', 'bjp_bias');
+        const congress = extractBiasValue(source, 'avg_congress_bias', 'avgCongressBias', 'congress_bias');
+        
+        return {
+          name: typeof sourceName === 'string' && sourceName.trim() ? sourceName : `Source ${idx + 1}`,
+          bjpBias: bjp,
+          congressBias: congress,
+        };
+      });
+
+      const CustomLineTooltip = ({ active, payload }: any) => {
+        if (!active || !payload?.length) return null;
+        const data = payload[0]?.payload;
+        return (
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
+            <p className="text-sm font-medium text-gray-900 dark:text-white">{data.name}</p>
+            {payload.map((entry: any, idx: number) => (
+              <p key={idx} className="text-sm" style={{ color: entry.color }}>
+                {entry.name}: {typeof entry.value === 'number' ? entry.value.toFixed(2) : '—'}
+              </p>
+            ))}
+          </div>
+        );
+      };
+
+      return (
+        <div className="space-y-4">
+          <div className="h-70 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={lineChartData}
+                margin={{ top: 20, right: 30, bottom: 40, left: 20 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="name" 
+                  angle={-30} 
+                  textAnchor="end" 
+                  height={60}
+                  interval={0}
+                  tick={{ fontSize: 12 }}
+                />
+                <YAxis />
+                <Tooltip content={<CustomLineTooltip />} />
+                <Legend />
+                <Line 
+                  type="monotone" 
+                  dataKey="bjpBias" 
+                  name="BJP Bias"
+                  stroke="#f97316" 
+                  strokeWidth={2}
+                  dot={{ fill: '#f97316', r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="congressBias" 
+                  name="Congress Bias"
+                  stroke="#2563eb" 
+                  strokeWidth={2}
+                  dot={{ fill: '#2563eb', r: 4 }}
+                  activeDot={{ r: 6 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+            {lineChartData.map((source) => (
+              <div key={source.name} className="bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 p-3">
+                <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">{source.name}</p>
+                <div className="flex gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#f97316' }} />
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      BJP: <strong>{source.bjpBias > 0 ? '+' : ''}{source.bjpBias.toFixed(2)}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#2563eb' }} />
+                    <span className="text-xs text-gray-600 dark:text-gray-400">
+                      Congress: <strong>{source.congressBias > 0 ? '+' : ''}{source.congressBias.toFixed(2)}</strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // If distribution data exists, show pie chart
+    let prepared: Array<{ label: string; count: number; percentage?: string; rawValue?: number }> = [];
+
+    prepared = Object.entries(distribution)
       .map(([label, count]) => ({
         label: String(label),
         count: toFiniteNumber(count) ?? 0,
-        percentage: 0, // Will be calculated after filtering
+        percentage: undefined,
       }))
       .filter((item) => item.count > 0)
       .sort((a, b) => b.count - a.count);
@@ -331,7 +558,7 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
     // Add percentage to each item
     const dataWithPercentage = prepared.map(item => ({
       ...item,
-      percentage: ((item.count / total) * 100).toFixed(1)
+      percentage: total > 0 ? ((item.count / total) * 100).toFixed(1) : '0'
     }));
 
     const defaultColors = ['#10b981', '#0ea5e9', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
@@ -350,19 +577,38 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
       return defaultColors[index % defaultColors.length];
     };
 
-    const CustomTooltip = ({ active, payload }: any) => {
-      if (active && payload && payload.length) {
-        const data = payload[0].payload;
-        return (
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
-            <p className="text-sm font-medium text-gray-900 dark:text-white">{data.label}</p>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Count: {data.count} ({data.percentage}%)
-            </p>
-          </div>
-        );
-      }
-      return null;
+    type TooltipContentProps = {
+      active?: boolean;
+      payload?: Array<{
+        payload?: {
+          label?: unknown;
+          count?: unknown;
+          percentage?: unknown;
+        };
+      }>;
+    };
+
+    const CustomTooltip = ({ active, payload }: TooltipContentProps) => {
+      if (!active || !payload?.length) return null;
+
+      const data = payload[0]?.payload;
+      const label = typeof data?.label === 'string' ? data.label : '—';
+      const count = typeof data?.count === 'number' ? data.count : '—';
+      const percentage =
+        typeof data?.percentage === 'number'
+          ? data.percentage.toFixed(1)
+          : typeof data?.percentage === 'string'
+            ? data.percentage
+            : '—';
+
+      return (
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-lg">
+          <p className="text-sm font-medium text-gray-900 dark:text-white">{label}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            Count: {count} ({percentage}%)
+          </p>
+        </div>
+      );
     };
 
     return (
@@ -466,50 +712,57 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
           </div>
           {labelDistribution || topSourcesSorted.length > 0 ? (
             <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {labelDistribution ? (
+              {labelDistribution || topSourcesSorted.length > 0 ? (
                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">Label Distribution</p>
-                  {renderLabelDistribution(labelDistribution)}
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                    {labelDistribution && Object.keys(labelDistribution).length > 0 ? 'Label Distribution' : 'Bias Distribution Across Sources'}
+                  </p>
+                  {renderLabelDistribution(labelDistribution ?? {})}
                 </div>
               ) : null}
 
               <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-                <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Top Sources</h4>
-                {topSourcesSorted.length > 0 ? (
-                  <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={topSourcesSorted.slice(0, 10).map((entry) => {
-                          const record = entry as Record<string, unknown>;
-                          return {
-                            source: formatValue(pickSourceLike(record)) || 'Unknown',
-                            count: getCount(record),
-                          };
-                        })}
-                        margin={{ top: 20, right: 30, left: 20, bottom: 60 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis
-                          dataKey="source"
-                          stroke="#6b7280"
-                          fontSize={12}
-                          angle={-45}
-                          textAnchor="end"
-                          height={80}
-                        />
-                        <YAxis stroke="#6b7280" fontSize={12} />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: 'rgb(31 41 55)',
-                            border: '1px solid rgb(75 85 99)',
-                            borderRadius: '8px',
-                            color: 'white',
-                          }}
-                          formatter={(value) => [value, 'Articles']}
-                        />
-                        <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                  Article Distribution by News Source
+                </h4>
+                {topSourcesPieData.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="h-64 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={topSourcesPieData}
+                            dataKey="value"
+                            nameKey="source"
+                            innerRadius={55}
+                            outerRadius={85}
+                            paddingAngle={2}
+                            labelLine={false}
+                            label={false}
+                          >
+                            {topSourcesPieData.map((entry, idx) => (
+                              <Cell key={`${entry.source}-${idx}`} fill={topSourceColors[idx % topSourceColors.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip content={renderTopSourcesTooltip} />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {topSourcesPieData.map((item, idx) => {
+                        const percentage = topSourcesPieTotal > 0 ? ((item.value / topSourcesPieTotal) * 100).toFixed(1) : '0';
+                        return (
+                          <div key={`${item.source}-dist-${idx}`} className="flex items-center gap-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 p-2 rounded">
+                            <div 
+                              className="w-3 h-3 rounded-full flex-shrink-0" 
+                              style={{ backgroundColor: topSourceColors[idx % topSourceColors.length] }}
+                            />
+                            <span><strong>{item.source}</strong>: {item.value} ({percentage}%)</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : (
                   <p className="text-sm text-gray-500 dark:text-gray-400">No source data available.</p>
@@ -521,44 +774,98 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
 
     <div>
           <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Source Label Bias</h4>
-          <div className="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 dark:bg-gray-800">
-                <tr>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Source</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Label 1</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Value 1</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Label 2</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Value 2</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Label 3</th>
-                  <th className="text-left px-3 py-2 text-gray-700 dark:text-gray-300 font-medium">Value 3</th>
-                </tr>
-              </thead>
-              <tbody>
-                {standardizedBiasRows.length > 0 ? (
-                  standardizedBiasRows.map((row, idx) => (
-                    <tr key={`${row.source}-${idx}`} className="border-t border-gray-200 dark:border-gray-700">
-                      <td className="px-3 py-2 text-gray-900 dark:text-gray-100">{row.source}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.label_1}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.value_1}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.label_2}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.value_2}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.label_3}</td>
-                      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{row.value_3}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-3 text-gray-500 dark:text-gray-400">
-                      No source-label bias data available.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          {sourceLabelBias.length > 0 ? (
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={sourceLabelBias.map((entry) => {
+                      const record = entry as Record<string, unknown>;
+                      const source = formatValue(pickSourceLike(record));
+                      
+                      // Use extractBiasValue for robust extraction
+                      const bjpBias = extractBiasValue(record, 'avg_bjp_bias', 'avgBjpBias', 'bjp_bias');
+                      const congressBias = extractBiasValue(record, 'avg_congress_bias', 'avgCongressBias', 'congress_bias');
+                      const articleCount = extractBiasValue(record, 'article_count', 'articleCount', 'count');
+                      
+                      return {
+                        source: typeof source === 'string' && source.trim() ? source : 'Unknown',
+                        bjp_bias: bjpBias,
+                        congress_bias: congressBias,
+                        article_count: articleCount,
+                      };
+                    })}
+                    layout="vertical"
+                    margin={{ top: 5, right: 30, left: 120, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis type="number" />
+                    <YAxis dataKey="source" type="category" width={115} tick={{ fontSize: 12 }} />
+                    <Tooltip 
+                      contentStyle={{
+                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                        border: 'none',
+                        borderRadius: '8px',
+                        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                      }}
+                      formatter={(value) => {
+                        const num = typeof value === 'number' ? value : parseFloat(String(value));
+                        return isNaN(num) ? '—' : num.toFixed(2);
+                      }}
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="bjp_bias"
+                      fill="#f97316"
+                      name="Avg BJP Bias"
+                      radius={[0, 8, 8, 0]}
+                    />
+                    <Bar
+                      dataKey="congress_bias"
+                      fill="#2563eb"
+                      name="Avg Congress Bias"
+                      radius={[0, 8, 8, 0]}
+                    />
+                    <Bar
+                      dataKey="article_count"
+                      fill="#10b981"
+                      name="Article Count"
+                      radius={[0, 8, 8, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+                {sourceLabelBias.map((entry, idx) => {
+                  const record = entry as Record<string, unknown>;
+                  const source = formatValue(pickSourceLike(record));
+                  
+                  // Use extractBiasValue for robust extraction
+                  const bjpBias = extractBiasValue(record, 'avg_bjp_bias', 'avgBjpBias', 'bjp_bias');
+                  const congressBias = extractBiasValue(record, 'avg_congress_bias', 'avgCongressBias', 'congress_bias');
+                  const articleCount = extractBiasValue(record, 'article_count', 'articleCount', 'count');
+                  
+                  return (
+                    <div key={`${source}-summary-${idx}`} className="bg-white dark:bg-gray-700 rounded p-2 border border-gray-200 dark:border-gray-600">
+                      <p className="font-semibold text-gray-900 dark:text-white truncate">{typeof source === 'string' && source.trim() ? source : 'Unknown'}</p>
+                      <div className="mt-1 space-y-0.5 text-gray-600 dark:text-gray-300">
+                        <p><span className="inline-block w-3 h-3 bg-orange-400 rounded-sm mr-1"></span>Avg BJP Bias: {bjpBias.toFixed(2)}</p>
+                        <p><span className="inline-block w-3 h-3 bg-blue-400 rounded-sm mr-1"></span>Avg Congress Bias: {congressBias.toFixed(2)}</p>
+                        <p><span className="inline-block w-3 h-3 bg-green-400 rounded-sm mr-1"></span>Article Count: {Math.round(articleCount)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+              <p className="text-sm text-gray-500 dark:text-gray-400">No source-label bias data available.</p>
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
   );
 }
+

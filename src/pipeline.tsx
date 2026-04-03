@@ -2,7 +2,12 @@ export type AnalysisInput = { type: 'url'; value: string };
 
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | string;
 
-export type PipelineStep = 'scraped' | 'coref_resolved' | 'preprocessed' | 'bias_scored';
+export type PipelineStep =
+  | 'scraped'
+  | 'coref_resolved'
+  | 'preprocessed'
+  | 'bias_scored'
+  | 'explanation_generated';
 
 export interface RunPipelineOptions {
   intervalMs?: number;
@@ -17,29 +22,55 @@ export interface CreateJobResponse {
   status: JobStatus;
 }
 
-export interface InferenceResult {
-  aggregate_score?: number | null;
-  aggregate_label?: string | null;
-  median_score?: number | null;
-  mode_value?: string | null;
-  scored_list?: Array<{ sent?: string | null; label?: string | null; score?: number | null }> | null;
-  [key: string]: unknown;
+export type BiasLabel = 'pro' | 'anti' | 'neutral';
+
+export interface BiasScoredListItem {
+  sent: string;
+  target: string;
+  label: BiasLabel;
+  score: number;
+}
+
+export interface BiasResult {
+  bjp_axis: number;
+  congress_axis: number;
+  scored_list: BiasScoredListItem[];
+  median_score: number;
+  mode_value: BiasLabel;
+}
+
+export interface ExplainabilityAxisAnalysis {
+  bjp: string;
+  congress: string;
+}
+
+export interface ExplainabilityResult {
+  bias_explanation: string;
+  overall_interpretation: string;
+  axis_analysis: ExplainabilityAxisAnalysis;
+  evidence: string[];
+  confidence_note: string;
+}
+
+export interface PipelineApiResult {
+  bias: BiasResult;
+  explainability: ExplainabilityResult;
 }
 
 export interface JobStatusResponse {
   job_id: string;
   status: JobStatus;
   step?: string | null;
-  result?: InferenceResult | null;
+  result?: PipelineApiResult | null;
   error?: string | null;
 }
 
 export interface PipelineRunResult {
   content: string;
   job_id: string;
-  aggregate_score: number | null;
-  aggregate_label: string | null;
   pipeline_status: PipelineStep[];
+  bias: BiasResult;
+  explainability: ExplainabilityResult;
 }
 
 export type DashboardPayload = {
@@ -52,16 +83,16 @@ function joinUrl(base: string, path: string) {
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }
 
-async function fetchJson(url: string, init: RequestInit, signal?: AbortSignal) {
+async function fetchJson<T>(url: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { ...init, signal });
   const text = await res.text().catch(() => '');
   if (!res.ok) {
     throw new Error(`API error: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`);
   }
   try {
-    return text ? JSON.parse(text) : {};
+    return text ? (JSON.parse(text) as T) : ({} as T);
   } catch {
-    return text;
+    return text as unknown as T;
   }
 }
 
@@ -87,14 +118,16 @@ function stepFromGateway(step: unknown): PipelineStep | null {
   if (s.includes('scrap')) return 'scraped';
   if (s.includes('coref')) return 'coref_resolved';
   if (s.includes('pre')) return 'preprocessed';
+  if (s.includes('explain') || s.includes('reason') || s.includes('rationale') || s.includes('interpret'))
+    return 'explanation_generated';
   if (s.includes('bias') || s.includes('infer') || s.includes('score')) return 'bias_scored';
   return null;
 }
 
 export async function createPipelineJob(url: string, signal?: AbortSignal): Promise<CreateJobResponse> {
-  const base: string | undefined = (import.meta as any).env?.VITE_PIPELINE_GATEWAY_URL;
+  const base: string | undefined = import.meta.env.VITE_PIPELINE_GATEWAY_URL;
   if (!base) throw new Error('VITE_PIPELINE_GATEWAY_URL is not configured.');
-  const data = await fetchJson(
+  const data = await fetchJson<CreateJobResponse>(
     joinUrl(base, '/api/pipeline'),
     {
       method: 'POST',
@@ -103,14 +136,18 @@ export async function createPipelineJob(url: string, signal?: AbortSignal): Prom
     },
     signal,
   );
-  return data as CreateJobResponse;
+  return data;
 }
 
 export async function getPipelineJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatusResponse> {
-  const base: string | undefined = (import.meta as any).env?.VITE_PIPELINE_GATEWAY_URL;
+  const base: string | undefined = import.meta.env.VITE_PIPELINE_GATEWAY_URL;
   if (!base) throw new Error('VITE_PIPELINE_GATEWAY_URL is not configured.');
-  const data = await fetchJson(joinUrl(base, `/api/pipeline/${encodeURIComponent(jobId)}`), { method: 'GET' }, signal);
-  return data as JobStatusResponse;
+  const data = await fetchJson<JobStatusResponse>(
+    joinUrl(base, `/api/pipeline/${encodeURIComponent(jobId)}`),
+    { method: 'GET' },
+    signal,
+  );
+  return data;
 }
 
 export async function runAsyncPipelineGateway(input: AnalysisInput, opts: RunPipelineOptions = {}): Promise<PipelineRunResult> {
@@ -139,6 +176,10 @@ export async function runAsyncPipelineGateway(input: AnalysisInput, opts: RunPip
     const status = await getPipelineJobStatus(job.job_id, signal);
     onStatusChange?.(status);
 
+    if (status.error != null) {
+      throw new Error(status.error || 'Job failed');
+    }
+
     const mapped = stepFromGateway(status.step);
     if (mapped && !steps.includes(mapped)) {
       steps.push(mapped);
@@ -146,42 +187,26 @@ export async function runAsyncPipelineGateway(input: AnalysisInput, opts: RunPip
     }
 
     if (status.status === 'completed') {
-      const scoredList: Array<{ sent?: string | null; score?: number | null }> =
-        (status.result as any)?.scored_list ?? [];
+      const completedResult = status.result;
+      if (!completedResult?.bias || !completedResult.explainability) {
+        throw new Error('Pipeline completed but result payload is missing.');
+      }
 
-      const aggregate_score_raw = (status.result as any)?.aggregate_score;
-      const aggregate_label_raw = (status.result as any)?.aggregate_label;
-      const aggregate_score =
-        typeof aggregate_score_raw === 'number'
-          ? aggregate_score_raw
-          : aggregate_score_raw == null
-            ? null
-            : Number(aggregate_score_raw);
-      const aggregate_label =
-        typeof aggregate_label_raw === 'string'
-          ? aggregate_label_raw
-          : aggregate_label_raw == null
-            ? null
-            : String(aggregate_label_raw);
-
+      const scoredList = completedResult.bias.scored_list ?? [];
       const bestEntry = scoredList.reduce<null | { sent: string; score: number }>((best, entry) => {
-        const score = typeof entry?.score === 'number' ? entry.score : Number(entry?.score);
-        if (!Number.isFinite(score)) return best;
-        if (!best || Math.abs(score) > Math.abs(best.score)) {
-          return { sent: entry.sent ?? '', score };
+        if (!Number.isFinite(entry.score)) return best;
+        if (!best || Math.abs(entry.score) > Math.abs(best.score)) {
+          return { sent: entry.sent, score: entry.score };
         }
         return best;
       }, null);
 
-      // Only surface the relevant sentence; do not show bias scores in the UI.
-      const content = bestEntry ? bestEntry.sent ?? '' : '';
-
       return {
-        content,
+        content: bestEntry?.sent ?? '',
         job_id: jobId,
-        aggregate_score: Number.isFinite(aggregate_score as number) ? (aggregate_score as number) : null,
-        aggregate_label: aggregate_label,
         pipeline_status: steps,
+        bias: completedResult.bias,
+        explainability: completedResult.explainability,
       };
     }
 
@@ -194,7 +219,7 @@ export async function runAsyncPipelineGateway(input: AnalysisInput, opts: RunPip
 }
 
 function getDashboardBaseUrl(): string {
-  const base: string | undefined = (import.meta as any).env?.VITE_PIPELINE_GATEWAY_URL;
+  const base: string | undefined = import.meta.env.VITE_PIPELINE_GATEWAY_URL;
   if (!base) throw new Error('VITE_PIPELINE_GATEWAY_URL is not configured.');
   return base;
 }
@@ -203,9 +228,9 @@ export async function fetchDashboard(signal?: AbortSignal): Promise<DashboardPay
   const base = getDashboardBaseUrl();
 
   const [summary, topSources, sourceLabelBias] = await Promise.all([
-    fetchJson(joinUrl(base, '/api/summary'), { method: 'GET' }, signal),
-    fetchJson(joinUrl(base, '/api/top-sources'), { method: 'GET' }, signal),
-    fetchJson(joinUrl(base, '/api/source-label-bias'), { method: 'GET' }, signal),
+    fetchJson<unknown>(joinUrl(base, '/api/summary'), { method: 'GET' }, signal),
+    fetchJson<unknown>(joinUrl(base, '/api/top-sources'), { method: 'GET' }, signal),
+    fetchJson<unknown>(joinUrl(base, '/api/source-label-bias'), { method: 'GET' }, signal),
   ]);
 
   return {

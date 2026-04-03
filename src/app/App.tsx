@@ -15,15 +15,17 @@ import {
   fetchDashboard,
   type AnalysisInput,
   type PipelineStep,
+  type BiasResult,
+  type ExplainabilityResult,
   type DashboardPayload,
 } from '../pipeline';
 
 interface AnalysisResult {
   content: string;
   job_id: string;
-  aggregate_score: number | null;
-  aggregate_label: string | null;
   pipeline_status: PipelineStep[];
+  bias: BiasResult;
+  explainability: ExplainabilityResult;
 }
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; errorMessage: string | null }> {
@@ -96,9 +98,9 @@ function AppContent() {
       setResult({
         content: data.content || '',
         job_id: data.job_id,
-        aggregate_score: data.aggregate_score ?? null,
-        aggregate_label: data.aggregate_label ?? null,
         pipeline_status: data.pipeline_status || [],
+        bias: data.bias,
+        explainability: data.explainability,
       });
       pipelineSucceeded = true;
     } catch (err) {
@@ -223,10 +225,13 @@ function AppContent() {
             {error && <ErrorDisplay message={error} />}
             {result && !isLoading && (
               <ResultsPanel
-                aggregateScore={result.aggregate_score}
-                aggregateLabel={result.aggregate_label}
                 pipelineStatus={result.pipeline_status}
                 jobId={result.job_id}
+                bjpAxis={result.bias.bjp_axis}
+                congressAxis={result.bias.congress_axis}
+                modeValue={result.bias.mode_value}
+                scoredList={result.bias.scored_list}
+                explainability={result.explainability}
               />
             )}
             {!isLoading && !error && !result && (

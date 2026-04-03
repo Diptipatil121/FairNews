@@ -6,3 +6,7 @@
 //   export default src;
 // }
 
+interface ImportMetaEnv {
+  readonly VITE_PIPELINE_GATEWAY_URL?: string;
+}
+

@@ -12,10 +12,11 @@ const stepLabels: Record<string, string> = {
   preprocessed: 'Content Preprocessed',
   coref_resolved: 'Coreferences Resolved',
   bias_scored: 'Bias Score Calculated',
+  explanation_generated: 'Explanation Generated',
 };
 
 /** Single display order; must stay in sync with `PipelineStep` in pipeline.tsx / LoadingState. */
-const PIPELINE_ORDER = ['scraped', 'coref_resolved', 'preprocessed', 'bias_scored'] as const;
+const PIPELINE_ORDER = ['scraped', 'coref_resolved', 'preprocessed', 'bias_scored', 'explanation_generated'] as const;
 
 function pipelineRows(completedSteps: string[]) {
   const done = new Set(completedSteps);

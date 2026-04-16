@@ -727,15 +727,15 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
                 </h4>
                 {topSourcesPieData.length > 0 ? (
                   <div className="space-y-4">
-                    <div className="h-64 w-full">
+                    <div className="w-full aspect-square max-h-[400px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
                             data={topSourcesPieData}
                             dataKey="value"
                             nameKey="source"
-                            innerRadius={55}
-                            outerRadius={85}
+                            innerRadius="55"
+                            outerRadius="80%"
                             paddingAngle={2}
                             labelLine={false}
                             label={false}
@@ -745,7 +745,7 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
                             ))}
                           </Pie>
                           <Tooltip content={renderTopSourcesTooltip} />
-                          <Legend />
+                        
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
@@ -776,7 +776,12 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
           <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Source Label Bias</h4>
           {sourceLabelBias.length > 0 ? (
             <div className="bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <div className="h-80 w-full">
+              <div
+              className="w-full"
+              style={{
+              height: `${Math.max(300, sourceLabelBias.length * 60)}px`,
+           }}
+>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={sourceLabelBias.map((entry) => {
@@ -835,7 +840,7 @@ export function DashboardPanel({ data }: DashboardPanelProps) {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-xs">
                 {sourceLabelBias.map((entry, idx) => {
                   const record = entry as Record<string, unknown>;
                   const source = formatValue(pickSourceLike(record));
